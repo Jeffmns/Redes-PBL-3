@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -26,11 +28,29 @@ func NewLedgerApp() *LedgerApp {
 	}
 }
 
+// parseTx verifica se os dados estão em hexadecimal e os converte para JSON antes de ler
+func parseTx(txBytes []byte) (core.Transaction, error) {
+	var tx core.Transaction
+
+	// Se a transação começa com "0x", removemos o prefixo e decodificamos
+	if bytes.HasPrefix(txBytes, []byte("0x")) {
+		decoded, err := hex.DecodeString(string(txBytes[2:]))
+		if err == nil {
+			txBytes = decoded // Substitui os dados originais pelo JSON limpo
+		}
+	}
+
+	// Agora sim tentamos converter o JSON para a struct
+	err := json.Unmarshal(txBytes, &tx)
+	return tx, err
+}
+
 // CheckTx é chamado quando uma nova transação chega na rede P2P.
 // AVALIAÇÃO: É aqui que o duplo gasto é detectado e rejeitado ANTES do bloco.
 func (app *LedgerApp) CheckTx(ctx context.Context, req *abcitypes.RequestCheckTx) (*abcitypes.ResponseCheckTx, error) {
-	var tx core.Transaction
-	if err := json.Unmarshal(req.Tx, &tx); err != nil {
+	tx, err := parseTx(req.Tx)
+	if err != nil {
+		fmt.Printf("❌ Falha ao converter dados. Erro: %v\n", err)
 		return &abcitypes.ResponseCheckTx{Code: 1, Log: "Erro ao ler transação"}, nil
 	}
 
@@ -54,8 +74,10 @@ func (app *LedgerApp) CheckTx(ctx context.Context, req *abcitypes.RequestCheckTx
 // AVALIAÇÃO: O "laudo" da missão é registrado de forma definitiva no ledger.
 func (app *LedgerApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestFinalizeBlock) (*abcitypes.ResponseFinalizeBlock, error) {
 	for _, txBytes := range req.Txs {
-		var tx core.Transaction
-		json.Unmarshal(txBytes, &tx)
+		tx, err := parseTx(txBytes)
+		if err != nil {
+			continue
+		}
 
 		// Aplica a transferência de saldos
 		if tx.Amount > 0 {

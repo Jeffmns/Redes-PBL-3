@@ -1,0 +1,27 @@
+services:
+  # Nossa aplicação Go (Máquina de Estado e Regras de Negócio)
+  ledger-app-1:
+    build:
+      context: .
+      dockerfile: ./ledger/Dockerfile
+    ports:
+      - "26658:26658" # Porta ABCI
+    networks:
+      - consorcio-net
+
+  # O Motor de Consenso P2P (CometBFT)
+  cometbft-node-1:
+    image: cometbft/cometbft:v0.38.0
+    # O comando abaixo inicializa o nó (se não existir) e o conecta ao nosso app Go
+    command: node --proxy_app=tcp://ledger-app-1:26658 --rpc.laddr=tcp://0.0.0.0:26657
+    ports:
+      - "26657:26657" # Porta RPC para o módulo 'cliente' enviar transações
+      - "26656:26656" # Porta P2P para fofoca entre os nós
+    networks:
+      - consorcio-net
+    depends_on:
+      - ledger-app-1
+
+networks:
+  consorcio-net:
+    driver: bridge

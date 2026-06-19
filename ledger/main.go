@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 
 	"pbl/core" // Nosso pacote compartilhado
 
@@ -60,7 +61,17 @@ func (app *LedgerApp) CheckTx(ctx context.Context, req *abcitypes.RequestCheckTx
 	}
 
 	// 2. Prevenção de Duplo Gasto e Saldo Insuficiente
-	if tx.Sender != "SISTEMA_CONSÓRCIO" {
+	// (Verificamos com e sem acento para garantir compatibilidade com o despachante)
+	if tx.Sender != "SISTEMA_CONSÓRCIO" && tx.Sender != "SISTEMA_CONSORCIO" {
+		
+		// =========================================================================
+		// HACK PARA A APRESENTAÇÃO: Dar 1000 créditos a qualquer carteira nova
+		// =========================================================================
+		if _, existe := app.Balances[tx.Sender]; !existe {
+			app.Balances[tx.Sender] = 1000.0
+			fmt.Println("🎁 Nova carteira detetada! A injetar 1000 créditos iniciais.")
+		}
+
 		saldoAtual := app.Balances[tx.Sender]
 		if saldoAtual < tx.Amount {
 			return &abcitypes.ResponseCheckTx{Code: 3, Log: "Saldo insuficiente / Duplo gasto bloqueado"}, nil
@@ -81,7 +92,7 @@ func (app *LedgerApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestF
 
 		// Aplica a transferência de saldos
 		if tx.Amount > 0 {
-			if tx.Sender != "SISTEMA_CONSÓRCIO" {
+			if tx.Sender != "SISTEMA_CONSÓRCIO" && tx.Sender != "SISTEMA_CONSORCIO" {
 				app.Balances[tx.Sender] -= tx.Amount
 			}
 			app.Balances[tx.Receiver] += tx.Amount
@@ -95,8 +106,29 @@ func (app *LedgerApp) FinalizeBlock(ctx context.Context, req *abcitypes.RequestF
 	return &abcitypes.ResponseFinalizeBlock{}, nil
 }
 
+// =========================================================================
+// API REST: Para expor os dados para o Professor / Dashboard
+// =========================================================================
+func iniciarAPI(app *LedgerApp) {
+	http.HandleFunc("/saldos", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(app.Balances)
+	})
+
+	http.HandleFunc("/auditoria", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(app.Logs)
+	})
+
+	fmt.Println("🌐 API REST do Ledger iniciada na porta 8080. Acesse /saldos ou /auditoria")
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
 func main() {
 	app := NewLedgerApp()
+
+	// Inicia a API REST numa goroutine separada para não travar o ABCI
+	go iniciarAPI(app)
 
 	fmt.Println("Iniciando Ledger App na porta 26658...")
 

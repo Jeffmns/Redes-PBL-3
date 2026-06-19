@@ -1,25 +1,26 @@
 # Estágio 1: Build
-FROM golang:1.24-alpine AS builder
+FROM golang:alpine AS builder
 
-# Define o diretório de trabalho dentro do container
-WORKDIR /app
 
-# Copia os arquivos de dependências primeiro (otimiza o cache das camadas)
-COPY go.mod go.sum ./
-RUN go mod download
+WORKDIR /workspace
 
-# Copia o restante do código fonte
+# Copiamos TODO o repositório para dentro do contêiner (Isto inclui a pasta core e a despachante)
 COPY . .
 
-# Compila o binário. 
-# CGO_ENABLED=0 garante que o binário seja estático e funcione em imagens leves.
-RUN CGO_ENABLED=0 GOOS=linux go build -o main .
+# Entramos especificamente na pasta do despachante para compilar
+WORKDIR /workspace/despachante
+
+# Sincroniza e baixa automaticamente as dependências que estão faltando (MQTT, Websockets, etc)
+RUN go mod tidy
+
+# Compila o binário de forma estática
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/main .
 
 # ---
-# Estágio 2: Final (Imagem de execução)
+# Estágio 2: Final (Imagem de execução leve)
 FROM alpine:latest
 
-# Instala certificados CA (necessário para chamadas HTTPS externas)
+# Instala certificados CA (necessário para chamadas HTTPS externas ao CometBFT)
 RUN apk --no-cache add ca-certificates
 
 WORKDIR /root/
@@ -27,8 +28,7 @@ WORKDIR /root/
 # Copia apenas o binário compilado do estágio anterior
 COPY --from=builder /app/main .
 
-# Porta que a aplicação costuma rodar
+
 EXPOSE 8080
 
-# Comando para iniciar a aplicação
 CMD ["./main"]

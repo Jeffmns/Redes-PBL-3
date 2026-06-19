@@ -1,38 +1,182 @@
+version: '3.8'
+
 services:
-  # Nossa aplicação Go (Máquina de Estado e Regras de Negócio)
+  # ==========================================
+  # 1. MUNDO BLOCKCHAIN 
+  # ==========================================
   ledger-app-1:
     build:
       context: .
       dockerfile: ./ledger/Dockerfile
+    container_name: ledger-app-1
     ports:
       - "26658:26658" # Porta ABCI
     networks:
-      - consorcio-net
+      - consorcio_rede
 
-  # O Motor de Consenso P2P (CometBFT)
   cometbft-node-1:
     image: cometbft/cometbft:v0.38.0
+    container_name: cometbft-node-1
     command: node --proxy_app=tcp://ledger-app-1:26658 --rpc.laddr=tcp://0.0.0.0:26657
     ports:
-      - "26657:26657" # Porta RPC 
-      - "26656:26656" # Porta P2P 
+      - "26657:26657" # Porta RPC (Onde o cliente se conecta)
+      - "26656:26656" # Porta P2P
     networks:
-      - consorcio-net
+      - consorcio_rede
     depends_on:
       - ledger-app-1
 
-  # O Módulo Cliente (CLI)
   cliente-cli:
     build:
       context: .
-      dockerfile: ./cliente/Dockerfile # Certifique-se de que o caminho bate com a sua pasta
+      dockerfile: ./cliente/Dockerfile
+    container_name: cliente-cli
     networks:
-      - consorcio-net
-    # Mantém o contêiner vivo infinitamente no background para podermos enviar comandos
-    command: tail -f /dev/null
+      - consorcio_rede
+    command: tail -f /dev/null # Mantém vivo para podermos entrar e digitar comandos
     depends_on:
       - cometbft-node-1
 
+  # ==========================================
+  # 2. A PONTE (Novo Despachante)
+  # ==========================================
+  despachante:
+    build:
+      context: .
+      dockerfile: ./despachante/Dockerfile 
+    container_name: despachante
+    environment:
+      # Liga-se ao MQTT para despachar e ao CometBFT para ler a blockchain
+      - BROKERS=tcp://emqx1:1883,tcp://emqx2:1883,tcp://emqx3:1883
+      - COMETBFT_URL=http://cometbft-node-1:26657
+    networks:
+      - consorcio_rede
+    depends_on:
+      - cometbft-node-1
+      - emqx1
+
+  # ==========================================
+  # 3. INFRAESTRUTURA MQTT 
+  # ==========================================
+  emqx1:
+    image: emqx:5.3
+    container_name: emqx1
+    environment:
+      - EMQX_NODE_NAME=emqx@node1.emqx.io
+      - EMQX_CLUSTER__DISCOVERY_STRATEGY=static
+      - EMQX_CLUSTER__STATIC__SEEDS=emqx@node1.emqx.io,emqx@node2.emqx.io,emqx@node3.emqx.io
+    ports:
+      - "1883:1883"
+      - "18083:18083"
+      - "8083:8083"
+    networks:
+      consorcio_rede:
+        aliases:
+          - node1.emqx.io
+
+  emqx2:
+    image: emqx:5.3
+    container_name: emqx2
+    environment:
+      - EMQX_NODE_NAME=emqx@node2.emqx.io
+      - EMQX_CLUSTER__DISCOVERY_STRATEGY=static
+      - EMQX_CLUSTER__STATIC__SEEDS=emqx@node1.emqx.io,emqx@node2.emqx.io,emqx@node3.emqx.io
+    ports:
+      - "1884:1883"
+      - "8084:8083"
+    networks:
+      consorcio_rede:
+        aliases:
+          - node2.emqx.io
+
+  emqx3:
+    image: emqx:5.3
+    container_name: emqx3
+    environment:
+      - EMQX_NODE_NAME=emqx@node3.emqx.io
+      - EMQX_CLUSTER__DISCOVERY_STRATEGY=static
+      - EMQX_CLUSTER__STATIC__SEEDS=emqx@node1.emqx.io,emqx@node2.emqx.io,emqx@node3.emqx.io
+    ports:
+      - "1885:1883"
+      - "8085:8083"
+    networks:
+      consorcio_rede:
+        aliases:
+          - node3.emqx.io
+
+  # ==========================================
+  # 4. SISTEMA DISTRIBUÍDO RAFT 
+  # ==========================================
+  controlador-1:
+    build: ./controlador
+    container_name: controlador-1
+    depends_on:
+      - emqx1
+    ports:
+      - "9001:9000"
+    environment:
+      - CONTROLLER_ID=Controlador_1
+      - CONTROLLER_PORT=9000
+      - PEERS_RPC=controlador-2:9000,controlador-3:9000
+      - BROKERS=tcp://emqx1:1883,tcp://emqx2:1883,tcp://emqx3:1883
+    networks:
+      - consorcio_rede
+
+  controlador-2:
+    build: ./controlador
+    container_name: controlador-2
+    depends_on:
+      - emqx1
+    ports:
+      - "9002:9000"
+    environment:
+      - CONTROLLER_ID=Controlador_2
+      - CONTROLLER_PORT=9000
+      - PEERS_RPC=controlador-1:9000,controlador-3:9000
+      - BROKERS=tcp://emqx1:1883,tcp://emqx2:1883,tcp://emqx3:1883
+    networks:
+      - consorcio_rede
+  
+  controlador-3:
+    build: ./controlador
+    container_name: controlador-3
+    depends_on:
+      - emqx1
+    ports:
+      - "9003:9000"
+    environment:
+      - CONTROLLER_ID=Controlador_3
+      - CONTROLLER_PORT=9000
+      - PEERS_RPC=controlador-1:9000,controlador-2:9000
+      - BROKERS=tcp://emqx1:1883,tcp://emqx2:1883,tcp://emqx3:1883
+    networks:
+      - consorcio_rede
+
+  # ==========================================
+  # 5. OS DRONES TRABALHADORES 
+  # ==========================================
+  drone-01:
+    build: ./drone
+    container_name: drone-01
+    depends_on:
+      - emqx1
+    environment:
+      - DRONE_ID=drone_01
+      - BROKERS=tcp://emqx1:1883,tcp://emqx2:1883,tcp://emqx3:1883
+    networks:
+      - consorcio_rede
+  
+  drone-02:
+    build: ./drone
+    container_name: drone-02
+    depends_on:
+      - emqx1
+    environment:
+      - DRONE_ID=drone_02
+      - BROKERS=tcp://emqx1:1883,tcp://emqx2:1883,tcp://emqx3:1883
+    networks:
+      - consorcio_rede
+
 networks:
-  consorcio-net:
+  consorcio_rede:
     driver: bridge

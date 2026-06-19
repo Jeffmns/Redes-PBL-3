@@ -20,8 +20,8 @@ type OrdemDeVoo struct {
 type StatusDrone struct {
 	DroneID string `json:"drone_id"`
 	Status  string `json:"status"` // LIVRE, OCUPADO
+	Laudo   string `json:"laudo"`  // NOVO CAMPO!
 }
-
 var meuID string
 var mqttClient mqtt.Client
 
@@ -46,10 +46,15 @@ func aoReceberMissao(client mqtt.Client, msg mqtt.Message) {
 
 	fmt.Println("   -> ✅ [Drone] Missão concluída com sucesso! Retornando à base.")
 
-	// Informa ao Controlador que o drone está livre novamente
+// Simula laudos diferentes aleatoriamente (ou pode deixar fixo)
+	laudos := []string{"Rota Limpa e Segura", "Navio pirata avistado e afugentado", "Obstáculo na rota, navio desviado"}
+	laudoEscolhido := laudos[time.Now().UnixNano()%int64(len(laudos))]
+
+	// Informa ao Controlador E AO DESPACHANTE que o drone está livre
 	statusFinal := StatusDrone{
 		DroneID: meuID,
 		Status:  "LIVRE",
+		Laudo:   laudoEscolhido, // Coloca o laudo aqui!
 	}
 
 	payloadJSON, _ := json.Marshal(statusFinal)

@@ -16,8 +16,8 @@ RUN go mod tidy
 # Compilamos o executável
 RUN go build -o /usr/local/bin/ledger-app main.go
 
-# Expomos a porta TCP que o CometBFT usará para se conectar via ABCI
-EXPOSE 26658
+# Expomos as portas usadas pelo ABCI e pela API REST do ledger
+EXPOSE 26658 8080
 
 # Comando para iniciar a nossa aplicação
 CMD ["ledger-app"]
